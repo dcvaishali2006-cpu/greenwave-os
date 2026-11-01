@@ -8,6 +8,8 @@ import {
   type ApproachView,
   type Controller,
   type Dir,
+  type EmergencyRun,
+  type EmergencyVehicleState,
   type JunctionView,
   type LoggedDecision,
   type Metrics,
@@ -20,6 +22,25 @@ import {
 const LOOKAHEAD_S = 10;
 const SOON_S = 4;
 const MAX_LOGGED = 20000;
+/** An emergency switch may end a green only after this many seconds of it (safety minimum). */
+const EMERGENCY_MIN_GREEN_S = 5;
+/** Extra seconds an ambulance needs per queued vehicle it weaves past, capped at 12 vehicles. */
+const WEAVE_S_PER_VEHICLE = 0.4;
+const WEAVE_MAX_QUEUE = 12;
+
+interface EmergencyVehicle {
+  run: EmergencyRun;
+  order: number[];
+  /** Index in `order` of the next junction to clear. */
+  k: number;
+  /** Time it reaches junction order[k] if nothing holds it up. */
+  arriveAt: number;
+  /** Set once the signal is green for it: the second it clears the junction. */
+  passAt: number | null;
+  /** After the last junction: the second it leaves the corridor. */
+  exitAt: number | null;
+  announced: Set<number>;
+}
 
 interface ApproachState {
   queue: number;
@@ -51,6 +72,10 @@ export interface SimOptions {
   network?: Partial<NetworkConfig>;
   /** Keep a snapshot of the whole network every N seconds (0 = off). Used for replay and charts. */
   recordEvery?: number;
+  /** Signal priority for ambulances (default on). Can be switched during a run. */
+  priority?: boolean;
+  /** Ambulances to dispatch at given seconds. Deterministic, so runs can be compared. */
+  emergencies?: { t: number; dir: 'EB' | 'WB' }[];
 }
 
 /**
@@ -74,6 +99,10 @@ export class Simulation {
   private readonly recordEvery: number;
   private t = 0;
 
+  private priority: boolean;
+  private readonly evs: EmergencyVehicle[] = [];
+  private scheduled: { t: number; dir: 'EB' | 'WB' }[];
+
   private entered = 0;
   private exited = 0;
   private stops = 0;
@@ -86,6 +115,8 @@ export class Simulation {
     this.seed = opts.seed;
     this.controller = opts.controller;
     this.recordEvery = opts.recordEvery ?? 0;
+    this.priority = opts.priority ?? true;
+    this.scheduled = [...(opts.emergencies ?? [])].sort((a, b) => a.t - b.t);
 
     const n = this.cfg.junctionCount;
     this.js = Array.from({ length: n }, (_, idx) => ({
@@ -182,12 +213,12 @@ export class Simulation {
     return { index: J.idx, id: J.id, t, phase: J.phase, greenElapsed: J.greenElapsed, approaches };
   }
 
-  private log(J: Junction, kind: 'switch' | 'hold', to: Phase, reason: string, inputs?: Record<string, number | string>) {
+  private log(J: Junction, kind: 'switch' | 'hold', to: Phase, reason: string, inputs?: Record<string, number | string>, source?: string) {
     if (this.decisions.length >= MAX_LOGGED) return;
     this.decisions.push({
       t: this.t,
       junctionId: J.id,
-      controller: this.controller.name,
+      controller: source ?? this.controller.name,
       kind,
       from: J.phase,
       to,
@@ -232,8 +263,16 @@ export class Simulation {
       }
     }
 
-    // 3. Controller decisions (only for junctions that are green).
+    // 2c. Ambulances: move them, and find the junctions that must give them a green.
+    const held = this.updateEmergency(t);
+
+    // 3. Controller decisions (only for junctions that are green). Ambulance priority comes first.
     for (const J of this.js) {
+      const claim = held.get(J.idx);
+      if (claim) {
+        this.emergencyHold(J, claim.ev, claim.etaS, t);
+        continue;
+      }
       if (J.mode !== 'green') continue;
       const d = this.controller.decide(this.view(J, t));
       if (!d) continue;
@@ -295,6 +334,153 @@ export class Simulation {
     this.t++;
   }
 
+  // ---- Emergency vehicles ----
+
+  /** Priority on/off. Takes effect from the next second. */
+  setPriority(on: boolean): void {
+    this.priority = on;
+  }
+
+  get priorityOn(): boolean {
+    return this.priority;
+  }
+
+  /** Send an ambulance down the corridor now, eastbound (J1 to the last junction) or westbound. */
+  dispatchEmergency(dir: 'EB' | 'WB'): EmergencyRun {
+    const n = this.cfg.junctionCount;
+    const L = this.cfg.emergencyLinkS;
+    const order = dir === 'EB' ? Array.from({ length: n }, (_, i) => i) : Array.from({ length: n }, (_, i) => n - 1 - i);
+    const run: EmergencyRun = {
+      id: `A${this.evs.length + 1}`,
+      dir,
+      startT: this.t,
+      endT: null,
+      freeFlowS: L * (n + 1),
+      stops: 0,
+      waitedS: 0,
+      journeyS: null,
+      delayS: null,
+      priority: this.priority,
+      status: 'moving',
+    };
+    this.evs.push({ run, order, k: 0, arriveAt: this.t + L, passAt: null, exitAt: null, announced: new Set() });
+    return { ...run };
+  }
+
+  /** Results of every ambulance trip so far (newest last). */
+  emergencyRuns(): EmergencyRun[] {
+    return this.evs.map((e) => ({ ...e.run }));
+  }
+
+  private updateEmergency(t: number): Map<number, { ev: EmergencyVehicle; etaS: number }> {
+    const L = this.cfg.emergencyLinkS;
+    while (this.scheduled.length > 0 && this.scheduled[0].t <= t) this.dispatchEmergency(this.scheduled.shift()!.dir);
+
+    const held = new Map<number, { ev: EmergencyVehicle; etaS: number }>();
+    for (const ev of this.evs) {
+      const r = ev.run;
+      if (r.status === 'done') continue;
+
+      if (ev.k >= ev.order.length) {
+        if (t >= ev.exitAt!) {
+          r.status = 'done';
+          r.endT = t;
+          r.journeyS = t - r.startT;
+          r.delayS = r.journeyS - r.freeFlowS;
+        }
+        continue;
+      }
+
+      const j = ev.order[ev.k];
+      const J = this.js[j];
+      if (ev.passAt === null && t >= ev.arriveAt) {
+        if (J.mode === 'green' && J.phase === 0) {
+          const queue = J.approaches[r.dir].queue;
+          ev.passAt = t + Math.ceil(Math.min(queue, WEAVE_MAX_QUEUE) * WEAVE_S_PER_VEHICLE);
+        } else {
+          if (r.status !== 'waiting') {
+            r.status = 'waiting';
+            r.stops++;
+          }
+          r.waitedS++;
+        }
+      }
+      if (ev.passAt !== null && t >= ev.passAt) {
+        r.status = 'moving';
+        ev.k++;
+        ev.passAt = null;
+        if (ev.k >= ev.order.length) ev.exitAt = t + L;
+        else ev.arriveAt = t + L;
+        continue;
+      }
+
+      if (this.priority) {
+        const firstEta = ev.passAt !== null ? 0 : Math.max(0, ev.arriveAt - t);
+        for (let m = ev.k; m < ev.order.length; m++) {
+          const eta = firstEta + (m - ev.k) * L;
+          if (eta > this.cfg.emergencyPreemptS) break;
+          if (!held.has(ev.order[m])) held.set(ev.order[m], { ev, etaS: eta });
+        }
+      }
+    }
+    return held;
+  }
+
+  /** Give the ambulance an East-West green at this junction, within the safety limits (minimum green, clearance). */
+  private emergencyHold(J: Junction, ev: EmergencyVehicle, etaS: number, t: number): void {
+    const id = ev.run.id;
+    const who = `ambulance ${id} (${ev.run.dir === 'EB' ? 'eastbound' : 'westbound'})`;
+    const say = (kind: 'switch' | 'hold', reason: string) => {
+      if (ev.announced.has(J.idx)) return;
+      ev.announced.add(J.idx);
+      this.log(J, kind, 0, reason, { ambulance: id, etaS }, 'emergency');
+    };
+
+    if (J.mode === 'clear') {
+      if (J.nextPhase !== 0) {
+        say('switch', `Emergency corridor: ${who} reaches ${J.id} in about ${etaS} s. The coming green is given to East-West instead of North-South.`);
+        J.nextPhase = 0;
+      }
+      return;
+    }
+    if (J.phase === 0) {
+      say('hold', `Emergency corridor: ${who} reaches ${J.id} in about ${etaS} s. East-West green is held so it passes without stopping; the cross street waits.`);
+      return;
+    }
+    if (J.greenElapsed >= EMERGENCY_MIN_GREEN_S) {
+      say('switch', `Emergency corridor: ${who} reaches ${J.id} in about ${etaS} s. North-South green ended early, after ${J.greenElapsed} s, so East-West is green when it arrives.`);
+      J.lastGreenEnd[J.phase] = t;
+      J.mode = 'clear';
+      J.clearLeft = this.cfg.clearanceS;
+      J.nextPhase = 0;
+    }
+  }
+
+  private emergencyState(): EmergencyVehicleState[] {
+    const L = this.cfg.emergencyLinkS;
+    const out: EmergencyVehicleState[] = [];
+    for (const ev of this.evs) {
+      const r = ev.run;
+      if (r.status === 'done') continue;
+      const sign = r.dir === 'EB' ? 1 : -1;
+      let pos: number;
+      let etaS: number | null = null;
+      let nextJunction: string | null = null;
+      if (ev.k >= ev.order.length) {
+        const frac = 1 - Math.max(0, ev.exitAt! - this.t) / L;
+        pos = ev.order[ev.order.length - 1] + sign * frac;
+      } else {
+        const next = ev.order[ev.k];
+        const eta = ev.passAt !== null ? 0 : Math.max(0, ev.arriveAt - this.t);
+        pos = next - sign * (eta / L);
+        etaS = eta;
+        nextJunction = this.js[next].id;
+      }
+      out.push({ id: r.id, dir: r.dir, status: r.status === 'waiting' ? 'waiting' : 'moving', pos, nextJunction, etaS });
+    }
+    return out;
+  }
+
   run(untilS: number = this.scenario.durationS): this {
     while (this.t < untilS) this.step();
     return this;
@@ -329,6 +515,7 @@ export class Simulation {
         greenElapsed: J.greenElapsed,
         approaches: this.view(J, this.t).approaches,
       })),
+      emergency: this.emergencyState(),
     };
   }
 }

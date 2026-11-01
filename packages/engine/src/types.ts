@@ -24,6 +24,10 @@ export interface NetworkConfig {
   baseRate: Record<Dir, number>;
   /** CO2 per second of idling in kg. Approximate: ~1 L/h of petrol idling x 2.3 kg CO2 per L. Configurable. */
   idleKgCo2PerS: number;
+  /** Ambulance travel time between neighbouring junctions, seconds (faster than ordinary traffic). */
+  emergencyLinkS: number;
+  /** Signal priority starts this many seconds before the ambulance reaches a junction. */
+  emergencyPreemptS: number;
 }
 
 export const DEFAULT_NETWORK: NetworkConfig = {
@@ -35,6 +39,8 @@ export const DEFAULT_NETWORK: NetworkConfig = {
   clearanceS: 4,
   baseRate: { EB: 0.3, WB: 0.26, NB: 0.1, SB: 0.1 },
   idleKgCo2PerS: (1.0 / 3600) * 2.3,
+  emergencyLinkS: 15,
+  emergencyPreemptS: 20,
 };
 
 export interface Scenario {
@@ -146,8 +152,41 @@ export interface JunctionState {
   approaches: Record<Dir, ApproachView>;
 }
 
+/** One ambulance trip along the corridor. */
+export interface EmergencyRun {
+  id: string;
+  dir: 'EB' | 'WB';
+  startT: number;
+  endT: number | null;
+  /** Journey time if every signal were green on arrival. */
+  freeFlowS: number;
+  /** Times it had to stop at a red signal. */
+  stops: number;
+  /** Seconds spent waiting at red signals. */
+  waitedS: number;
+  /** Total journey time (null until it has left the corridor). */
+  journeyS: number | null;
+  /** Journey time minus free-flow time. */
+  delayS: number | null;
+  /** Was signal priority switched on when it was dispatched. */
+  priority: boolean;
+  status: 'moving' | 'waiting' | 'done';
+}
+
+/** Where a moving ambulance is right now, for the map. */
+export interface EmergencyVehicleState {
+  id: string;
+  dir: 'EB' | 'WB';
+  status: 'moving' | 'waiting';
+  /** Corridor position: 0 = first junction, 1 = second ... Below 0 or above the last index = approaching or leaving. */
+  pos: number;
+  nextJunction: string | null;
+  etaS: number | null;
+}
+
 export interface NetworkState {
   t: number;
   controller: string;
   junctions: JunctionState[];
+  emergency: EmergencyVehicleState[];
 }

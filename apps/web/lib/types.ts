@@ -1,7 +1,7 @@
 // Type-only imports: nothing from the engine is bundled into the browser.
-import type { LoggedDecision, Metrics, NetworkState } from '@greenwave/engine';
+import type { EmergencyResult, EmergencyRun, EmergencyVehicleState, LoggedDecision, Metrics, NetworkState } from '@greenwave/engine';
 
-export type { LoggedDecision, Metrics, NetworkState };
+export type { EmergencyResult, EmergencyRun, EmergencyVehicleState, LoggedDecision, Metrics, NetworkState };
 export type { Dir, JunctionState, ApproachView } from '@greenwave/engine';
 
 export type ControllerName = 'adaptive' | 'fixed' | 'fixed-tuned';
@@ -14,6 +14,9 @@ export interface LiveStatus {
   durationS: number;
   running: boolean;
   metrics?: Metrics;
+  /** Signal priority for ambulances. */
+  priority?: boolean;
+  emergencyRuns?: EmergencyRun[];
 }
 
 export interface CompareRow {

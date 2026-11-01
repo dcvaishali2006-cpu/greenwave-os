@@ -75,5 +75,42 @@ Full tables for every metric: `npm run benchmark`.
 - Two-phase junctions, no turning movements, no pedestrians, no platoon dispersion.
 - Vehicles are counts, not objects. "Wait" is queue delay per vehicle entering the network, not door-to-door time.
 - Saturation flow 1,800 veh/h per lane. Idling CO2 assumes about 1 L/h of fuel at 2.3 kg CO2 per litre (approximate, configurable).
-- Not built yet: emergency corridor, spillback guard, incident diversions, early gap-out of a green. The controller
+- Ambulances (see below) move at a fixed speed, know their route, and are never blocked by a queue for more than a few seconds. Real jams hold them up more, so the no-priority numbers are if anything too kind.
+- Not built yet: spillback guard, incident diversions, early gap-out of a green. The controller
   interface (`decide(view) -> Decision`) is where they plug in. SUMO can replace the simulator behind the same state shape.
+
+## Emergency corridor
+
+An ambulance enters at one end of the corridor and travels it at 15 s per link (ordinary traffic: 25 s). With signal priority **on**,
+every junction it is about to reach (within 20 s) is switched to East-West green so it arrives on green:
+
+- A North-South green is cut short only after at least **5 s** of green (safety minimum), then the normal 4 s clearance runs. A junction already clearing towards North-South is redirected to East-West.
+- While an ambulance is due, the controller's own decisions for that junction are paused. Afterwards the controller (fixed or adaptive) takes over again.
+- It works with any controller, because priority sits in the simulator layer, not in one controller.
+- Every priority action is logged with a plain-English reason (`controller: 'emergency'`), so the Why? list shows it.
+- With priority **off** the ambulance obeys the signals like everyone else, plus 0.4 s per queued vehicle it must weave past (capped at 12 vehicles).
+
+```ts
+const sim = new Simulation({ seed: 1, scenario: 'incident', controller: new AdaptiveController(),
+  priority: true, emergencies: [{ t: 900, dir: 'EB' }] });
+sim.run();
+sim.emergencyRuns(); // journey time, delay against free flow, stops, seconds waited at red
+```
+
+### Measured (seeds 1 to 10, four ambulances per run, same traffic with priority off and on)
+
+`npm run emergency -w @greenwave/engine -- --seeds=1..10` writes `out/emergency.md`.
+
+| Scenario | Controller | Ambulance trip, no priority | with priority | Stops | Cost to other traffic (avg wait) |
+|---|---|---|---|---|---|
+| normal | fixed | 166.0 s | 92.4 s | 4.50 to 0 | +1.2 s (+5.2%) |
+| normal | adaptive | 162.4 s | 91.7 s | 4.35 to 0 | +1.3 s (+6.0%) |
+| incident | fixed | 166.0 s | 93.7 s | 4.50 to 0 | -0.7 s (-0.8%) |
+| incident | adaptive | 149.5 s | 92.9 s | 3.45 to 0 | +3.4 s (+5.1%) |
+| rain | fixed | 165.5 s | 99.1 s | 4.50 to 0 | +3.2 s (+4.4%) |
+| rain | adaptive | 161.2 s | 96.9 s | 4.17 to 0 | +10.5 s (+15.9%) |
+
+Free-flow trip time is 90 s. Priority takes the ambulance to within 2 to 9 s of it and removes every stop. It is not free:
+other traffic waits 4 to 6% longer in most cases and about 16% longer in heavy rain with the adaptive controller, because the
+cross street gives up green time. The one negative figure (incident, fixed plan) is within the noise of the run-to-run variation, not a real gain.
+No parameter was tuned on these seeds: the 20 s lead time and 5 s minimum green were set from the safety reasoning above before the run.

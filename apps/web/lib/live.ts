@@ -38,7 +38,14 @@ export function useLive(enabled: boolean) {
       ws.onmessage = (ev) => {
         const m = JSON.parse(ev.data);
         if (m.type === 'tick') setState(m.state);
-        else if (m.type === 'decision') setFeed((f) => [{ ...m.decision, key: keyRef.current++ }, ...f].slice(0, 40));
+        else if (m.type === 'decision')
+          setFeed((f) => {
+            const all = [{ ...m.decision, key: keyRef.current++ }, ...f];
+            // Ambulance decisions are rare and important: keep the latest 12 even when ordinary decisions scroll past.
+            let regular = 0;
+            let amb = 0;
+            return all.filter((d) => (d.controller === 'emergency' ? amb++ < 12 : regular++ < 40));
+          });
         else if (m.type === 'run') {
           setFeed([]);
           refreshStatus();

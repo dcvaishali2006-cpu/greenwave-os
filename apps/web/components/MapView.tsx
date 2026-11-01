@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useRef } from 'react';
 import { AMBER, CORRIDOR, GREEN, RED, queueColor } from '@/lib/corridor';
+import { corridorPoint } from '@/lib/geo';
 import type { JunctionState, NetworkState } from '@/lib/types';
 
 const lamp = (j: JunctionState, axis: 0 | 1) => (j.phase !== axis ? RED : j.mode === 'green' ? GREEN : AMBER);
@@ -22,12 +23,17 @@ function markerHtml(j: JunctionState, selected: boolean, scale: number) {
   </div>`;
 }
 
+/** The ambulance: a pulsing red label that follows the corridor. */
+const ambulanceHtml = (id: string, waiting: boolean) =>
+  `<div class="gw-amb" style="display:flex;align-items:center;justify-content:center;width:64px;height:24px;border-radius:12px;background:${waiting ? '#B91C1C' : '#EF4444'};border:2px solid #fff;color:#fff;font:700 11px Inter,sans-serif;letter-spacing:.03em">${id}${waiting ? ' wait' : ''}</div>`;
+
 export default function MapView({ state, selected, onSelect }: { state: NetworkState | null; selected: string | null; onSelect: (id: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const markers = useRef<Record<string, L.Marker>>({});
   const lines = useRef<L.Polyline[]>([]);
   const cross = useRef<Record<string, L.Polyline>>({});
+  const ambulances = useRef<Record<string, L.Marker>>({});
   const pick = useRef(onSelect);
   pick.current = onSelect;
   const latest = useRef({ state, selected });
@@ -46,6 +52,26 @@ export default function MapView({ state, selected, onSelect }: { state: NetworkS
       if (!j) continue;
       markers.current[c.id]?.setIcon(L.divIcon({ className: '', html: markerHtml(j, sel === c.id, scale), iconSize: [96, 96], iconAnchor: [48, 48] }));
       cross.current[c.id]?.setStyle({ color: queueColor(Math.max(j.approaches.NB.queue, j.approaches.SB.queue)) });
+    }
+    // Ambulances: add, move or remove.
+    const seen = new Set<string>();
+    for (const e of s.emergency ?? []) {
+      seen.add(e.id);
+      const at = corridorPoint(e.pos);
+      const icon = L.divIcon({ className: '', html: ambulanceHtml(e.id, e.status === 'waiting'), iconSize: [64, 24], iconAnchor: [32, 12] });
+      const mk = ambulances.current[e.id];
+      if (mk) {
+        mk.setLatLng(at);
+        mk.setIcon(icon);
+      } else {
+        ambulances.current[e.id] = L.marker(at, { icon, interactive: false, zIndexOffset: 2000, keyboard: false }).addTo(m);
+      }
+    }
+    for (const id of Object.keys(ambulances.current)) {
+      if (!seen.has(id)) {
+        ambulances.current[id].remove();
+        delete ambulances.current[id];
+      }
     }
     lines.current.forEach((line, i) => {
       const a = by[CORRIDOR[i].id];
@@ -96,6 +122,7 @@ export default function MapView({ state, selected, onSelect }: { state: NetworkS
       markers.current = {};
       lines.current = [];
       cross.current = {};
+      ambulances.current = {};
     };
   }, []);
 

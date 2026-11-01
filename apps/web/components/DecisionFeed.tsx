@@ -16,7 +16,7 @@ export default function DecisionFeed({ feed, onPick }: { feed: FeedItem[]; onPic
               <div className="flex items-center gap-2 text-[11px]">
                 <span className="font-mono font-bold text-text">{d.junctionId}</span>
                 <span className="font-mono text-muted">{fmtClock(d.t)}</span>
-                <span className={`rounded px-1.5 py-px text-[10px] font-semibold uppercase ${d.kind === 'hold' ? 'bg-ai/20 text-ai' : 'bg-raised text-muted'}`}>{d.kind === 'hold' ? 'green wave' : d.controller}</span>
+                <span className={`rounded px-1.5 py-px text-[10px] font-semibold uppercase ${d.controller === 'emergency' ? 'bg-stop/20 text-stop' : d.kind === 'hold' ? 'bg-ai/20 text-ai' : 'bg-raised text-muted'}`}>{d.controller === 'emergency' ? 'ambulance' : d.kind === 'hold' ? 'green wave' : d.controller}</span>
               </div>
               <p className="mt-1 text-xs leading-snug text-muted">{d.reason}</p>
             </button>

@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { z, ZodError } from 'zod';
-import { runBenchmark, SCENARIOS } from '@greenwave/engine';
+import { runBenchmark, runEmergencyBenchmark, SCENARIOS } from '@greenwave/engine';
 import { AuditLog } from './audit.js';
 import { ApiError, AuthService, requireAuth, requireRole } from './auth.js';
 import { config } from './config.js';
@@ -32,6 +32,9 @@ const scenarioBody = z.object({
   seed: z.number().int().min(0).max(1_000_000).optional(),
   controller: z.enum(CONTROLLER_NAMES as [string, ...string[]]).optional(),
 });
+const emergencyBody = z.object({ direction: z.enum(['EB', 'WB']) });
+const priorityBody = z.object({ enabled: z.boolean() });
+const emergencyQuery = z.object({ scenario: z.enum(scenarioNames).default('incident'), controller: z.enum(['adaptive', 'fixed', 'fixed-tuned']).default('adaptive'), seeds: z.coerce.number().int().min(1).max(10).default(5) });
 const whyQuery = z.object({ limit: z.coerce.number().int().min(1).max(50).default(5) });
 const compareQuery = z.object({ scenario: z.enum(scenarioNames).default('incident'), seeds: z.coerce.number().int().min(1).max(10).default(5) });
 const auditQuery = z.object({ action: z.string().optional(), email: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) });
@@ -50,6 +53,7 @@ export function createApp(opts: AppOptions = {}) {
   const api = express.Router();
   const authed = requireAuth(auth);
   const compareCache = new Map<string, ReturnType<typeof runBenchmark>>();
+  const emergencyCache = new Map<string, ReturnType<typeof runEmergencyBenchmark>>();
 
   app.disable('x-powered-by');
   app.use(helmet());
@@ -119,6 +123,26 @@ export function createApp(opts: AppOptions = {}) {
     res.json({ ...live.status(), state: live.state() });
   });
 
+  // ---- Emergency vehicles ----
+  api.get('/live/emergency', authed, (_req, res) => {
+    const s = live.status();
+    res.json({ priority: s.priority, runs: s.emergencyRuns });
+  });
+
+  api.post('/live/emergency', authed, canControl, (req, res) => {
+    const { direction } = emergencyBody.parse(req.body);
+    const run = live.dispatchEmergency(direction);
+    audit.add(req.user!, 'dispatch_emergency', { direction, priority: run.priority, atSecond: live.time });
+    res.status(201).json(run);
+  });
+
+  api.post('/live/emergency/priority', authed, canControl, (req, res) => {
+    const { enabled } = priorityBody.parse(req.body);
+    live.setPriority(enabled);
+    audit.add(req.user!, 'set_emergency_priority', { enabled, atSecond: live.time });
+    res.json({ priority: enabled });
+  });
+
   // ---- Analytics (any signed-in role) ----
   api.get('/analytics/compare', authed, (req, res) => {
     const q = compareQuery.parse(req.query);
@@ -127,6 +151,18 @@ export function createApp(opts: AppOptions = {}) {
     if (!result) {
       result = runBenchmark(q.scenario, Array.from({ length: q.seeds }, (_, i) => i + 1));
       compareCache.set(key, result);
+    }
+    res.json(result);
+  });
+
+  /** Measured ambulance benefit and its cost to other traffic, same traffic with priority off and on. */
+  api.get('/analytics/emergency', authed, (req, res) => {
+    const q = emergencyQuery.parse(req.query);
+    const key = `${q.scenario}:${q.controller}:${q.seeds}`;
+    let result = emergencyCache.get(key);
+    if (!result) {
+      result = runEmergencyBenchmark(q.scenario, Array.from({ length: q.seeds }, (_, i) => i + 1), q.controller);
+      emergencyCache.set(key, result);
     }
     res.json(result);
   });

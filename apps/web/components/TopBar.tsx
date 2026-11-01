@@ -66,6 +66,32 @@ export default function TopBar({ user, status, connected, onChanged, onLogout }:
         </select>
       </label>
 
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted">Ambulance</span>
+        <div role="group" aria-label="Dispatch ambulance" className="inline-flex overflow-hidden rounded-lg border border-line">
+          {([['EB', 'J1 to J5'], ['WB', 'J5 to J1']] as const).map(([dir, label]) => (
+            <button
+              key={dir}
+              disabled={!canControl}
+              title={canControl ? `Send an ambulance from ${label.replace(' to ', ' to ')}` : 'Operators and admins only'}
+              onClick={() => act('/live/emergency', { direction: dir })}
+              className="bg-ink px-3 py-1.5 text-xs font-semibold text-muted transition hover:text-text disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          disabled={!canControl}
+          aria-pressed={status?.priority ?? true}
+          title={canControl ? 'Signal priority for ambulances: on gives them green lights, off treats them like other traffic' : 'Operators and admins only'}
+          onClick={() => act('/live/emergency/priority', { enabled: !(status?.priority ?? true) })}
+          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${(status?.priority ?? true) ? 'border-stop/60 bg-stop/15 text-stop' : 'border-line bg-ink text-muted'}`}
+        >
+          Priority {(status?.priority ?? true) ? 'on' : 'off'}
+        </button>
+      </div>
+
       {error && <span role="alert" className="text-xs text-stop">{error}</span>}
 
       <div className="ml-auto flex items-center gap-3">

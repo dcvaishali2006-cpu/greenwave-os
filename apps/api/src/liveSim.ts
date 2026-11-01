@@ -45,6 +45,7 @@ export class LiveSim extends EventEmitter {
   private controller!: Controller;
   private timer?: NodeJS.Timeout;
   private emitted = 0;
+  private priority = true;
 
   constructor(public cfg: LiveConfig) {
     super();
@@ -53,7 +54,7 @@ export class LiveSim extends EventEmitter {
 
   private build() {
     this.controller = makeController(this.cfg.controller, this.cfg.scenario);
-    this.sim = new Simulation({ seed: this.cfg.seed, scenario: this.cfg.scenario, controller: this.controller });
+    this.sim = new Simulation({ seed: this.cfg.seed, scenario: this.cfg.scenario, controller: this.controller, priority: this.priority });
     this.emitted = 0;
   }
 
@@ -66,7 +67,28 @@ export class LiveSim extends EventEmitter {
   }
 
   status() {
-    return { ...this.cfg, time: this.sim.time, durationS: this.sim.scenario.durationS, running: !!this.timer };
+    return {
+      ...this.cfg,
+      time: this.sim.time,
+      durationS: this.sim.scenario.durationS,
+      running: !!this.timer,
+      priority: this.priority,
+      emergencyRuns: this.sim.emergencyRuns().slice(-6),
+    };
+  }
+
+  /** Send an ambulance down the corridor now. */
+  dispatchEmergency(dir: 'EB' | 'WB') {
+    const run = this.sim.dispatchEmergency(dir);
+    this.emit('emergency', this.status());
+    return run;
+  }
+
+  /** Signal priority for ambulances on or off. Applies to this run and to later runs. */
+  setPriority(on: boolean): void {
+    this.priority = on;
+    this.sim.setPriority(on);
+    this.emit('emergency', this.status());
   }
 
   metrics() {

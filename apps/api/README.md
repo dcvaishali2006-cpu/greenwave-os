@@ -27,6 +27,10 @@ Demo accounts (password `demo1234`): `admin@demo.com`, `operator@demo.com`, `vie
 | `GET /live/plan-changes` | any | Recent adaptive plan changes with reasons |
 | `POST /live/controller` | operator, admin | `{controller: 'fixed' \| 'fixed-tuned' \| 'adaptive'}` swaps strategy mid-run |
 | `POST /live/scenario` | operator, admin | `{scenario, seed?, controller?}` starts a scenario (`normal`, `incident`, `rain`) |
+| `GET /live/emergency` | any | Signal priority on or off, and the ambulance trips so far |
+| `POST /live/emergency` | operator, admin | `{direction: 'EB' \| 'WB'}` sends an ambulance (EB = J1 to the last junction, WB = the reverse). Audited |
+| `POST /live/emergency/priority` | operator, admin | `{enabled: boolean}` signal priority for ambulances. Audited |
+| `GET /analytics/emergency?scenario=&controller=&seeds=` | any | Measured ambulance benefit and cost to other traffic, priority off vs on (cached) |
 | `GET /analytics/compare?scenario=&seeds=` | any | Adaptive vs fixed benchmark over 1 to 10 seeds (cached) |
 | `GET /admin/audit?action=&user=&limit=` | admin | Audit log |
 | `GET /admin/users` | admin | Users (no password hashes) |

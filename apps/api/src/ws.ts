@@ -11,6 +11,7 @@ import type { LiveSim } from './liveSim.js';
  *   {type:'tick', state}        every simulated second
  *   {type:'decision', decision} each new signal decision, with its reason
  *   {type:'run', ...status}     controller switched, or a scenario started or restarted
+ *   {type:'emergency', ...status} an ambulance was dispatched, or priority was switched
  * Client messages: {type:'subscribe', junctionIds:['J1','J3']} limits tick payloads; {type:'ping'}.
  */
 export function attachWebSocket(server: Server, live: LiveSim, auth: AuthService) {
@@ -52,6 +53,7 @@ export function attachWebSocket(server: Server, live: LiveSim, auth: AuthService
   live.on('decision', (decision) => broadcast(() => ({ type: 'decision', decision })));
   live.on('restart', (status) => broadcast(() => ({ type: 'run', ...status })));
   live.on('controller', (status) => broadcast(() => ({ type: 'run', ...status })));
+  live.on('emergency', (status) => broadcast(() => ({ type: 'emergency', ...status })));
 
   return wss;
 }

@@ -3,6 +3,7 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import ComparePanel from '@/components/ComparePanel';
 import DecisionFeed from '@/components/DecisionFeed';
+import EmergencyPanel from '@/components/EmergencyPanel';
 import JunctionPanel from '@/components/JunctionPanel';
 import Kpis from '@/components/Kpis';
 import Login from '@/components/Login';
@@ -52,6 +53,7 @@ export default function Home() {
         <aside className="min-h-0 space-y-3 overflow-y-auto border-l border-line bg-ink p-3">
           {junction ? <JunctionPanel junction={junction} onClose={() => setSelected(null)} /> : <p className="rounded-xl border border-dashed border-line px-3 py-2 text-xs text-muted">Click a junction on the map to see its queues and why its signals changed.</p>}
           <Kpis status={live.status} />
+          <EmergencyPanel status={live.status} />
           <ComparePanel scenario={live.status?.scenario ?? 'normal'} />
           <DecisionFeed feed={live.feed} onPick={setSelected} />
         </aside>

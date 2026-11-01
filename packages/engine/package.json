@@ -8,6 +8,7 @@
     "test": "tsx --test test/*.test.ts",
     "benchmark": "tsx src/benchmark.ts",
     "demo": "tsx src/demo.ts",
+    "emergency": "tsx src/emergency.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
