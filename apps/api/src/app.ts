@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { z, ZodError } from 'zod';
-import { runBenchmark, runEmergencyBenchmark, SCENARIOS } from '@greenwave/engine';
+import { BRANCH_NAMES, ForkError, forkRobustness, forkRun, runBenchmark, runEmergencyBenchmark, SCENARIOS } from '@greenwave/engine';
 import { AuditLog } from './audit.js';
 import { ApiError, AuthService, requireAuth, requireRole } from './auth.js';
 import { config } from './config.js';
@@ -35,6 +35,14 @@ const scenarioBody = z.object({
 const emergencyBody = z.object({ direction: z.enum(['EB', 'WB']) });
 const priorityBody = z.object({ enabled: z.boolean() });
 const emergencyQuery = z.object({ scenario: z.enum(scenarioNames).default('incident'), controller: z.enum(['adaptive', 'fixed', 'fixed-tuned']).default('adaptive'), seeds: z.coerce.number().int().min(1).max(10).default(5) });
+const forkQuery = z.object({
+  scenario: z.enum(scenarioNames).default('incident'),
+  seed: z.coerce.number().int().min(0).max(1_000_000).default(1),
+  at: z.coerce.number().int().min(0).max(3540).default(1200),
+  window: z.coerce.number().int().min(60).max(3600).default(2400),
+  history: z.enum(BRANCH_NAMES as [string, ...string[]]).default('fixed'),
+  seeds: z.coerce.number().int().min(1).max(8).default(5),
+});
 const whyQuery = z.object({ limit: z.coerce.number().int().min(1).max(50).default(5) });
 const compareQuery = z.object({ scenario: z.enum(scenarioNames).default('incident'), seeds: z.coerce.number().int().min(1).max(10).default(5) });
 const auditQuery = z.object({ action: z.string().optional(), email: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) });
@@ -54,6 +62,7 @@ export function createApp(opts: AppOptions = {}) {
   const authed = requireAuth(auth);
   const compareCache = new Map<string, ReturnType<typeof runBenchmark>>();
   const emergencyCache = new Map<string, ReturnType<typeof runEmergencyBenchmark>>();
+  const forkCache = new Map<string, unknown>();
 
   app.disable('x-powered-by');
   app.use(helmet());
@@ -163,6 +172,31 @@ export function createApp(opts: AppOptions = {}) {
     if (!result) {
       result = runEmergencyBenchmark(q.scenario, Array.from({ length: q.seeds }, (_, i) => i + 1), q.controller);
       emergencyCache.set(key, result);
+    }
+    res.json(result);
+  });
+
+  /**
+   * Time Machine: rewind to second `at`, hand the signals to each controller, and compare the next `window` seconds on
+   * identical traffic. Also repeats the fork over `seeds` seeds so one lucky run does not decide the story.
+   * It only reads: the live simulation is untouched, so every role may use it.
+   */
+  const forkLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many Time Machine runs. Wait a minute.' } } });
+  api.get('/timemachine/fork', authed, forkLimiter, (req, res) => {
+    const q = forkQuery.parse(req.query);
+    const key = JSON.stringify(q);
+    let result = forkCache.get(key);
+    if (!result) {
+      try {
+        const opts = { scenario: q.scenario, atS: q.at, windowS: q.window, history: q.history as (typeof BRANCH_NAMES)[number] };
+        const seeds = Array.from({ length: q.seeds }, (_, i) => q.seed + i);
+        result = { ...forkRun({ ...opts, seed: q.seed }), robustness: forkRobustness(opts, seeds) };
+      } catch (e) {
+        if (e instanceof ForkError) throw new ApiError(400, 'VALIDATION', e.message);
+        throw e;
+      }
+      if (forkCache.size > 200) forkCache.clear();
+      forkCache.set(key, result);
     }
     res.json(result);
   });

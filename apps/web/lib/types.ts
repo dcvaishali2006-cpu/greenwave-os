@@ -1,7 +1,10 @@
 // Type-only imports: nothing from the engine is bundled into the browser.
-import type { EmergencyResult, EmergencyRun, EmergencyVehicleState, LoggedDecision, Metrics, NetworkState } from '@greenwave/engine';
+import type { EmergencyResult, EmergencyRun, EmergencyVehicleState, ForkResult, ForkRobustness, LoggedDecision, Metrics, NetworkState } from '@greenwave/engine';
 
-export type { EmergencyResult, EmergencyRun, EmergencyVehicleState, LoggedDecision, Metrics, NetworkState };
+export type { EmergencyResult, EmergencyRun, EmergencyVehicleState, ForkResult, ForkRobustness, LoggedDecision, Metrics, NetworkState };
+
+/** Time Machine response: the fork on one seed plus the same fork repeated over several seeds. */
+export type ForkResponse = ForkResult & { robustness: ForkRobustness };
 export type { Dir, JunctionState, ApproachView } from '@greenwave/engine';
 
 export type ControllerName = 'adaptive' | 'fixed' | 'fixed-tuned';

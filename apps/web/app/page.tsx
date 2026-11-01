@@ -7,6 +7,7 @@ import EmergencyPanel from '@/components/EmergencyPanel';
 import JunctionPanel from '@/components/JunctionPanel';
 import Kpis from '@/components/Kpis';
 import Login from '@/components/Login';
+import TimeMachine from '@/components/TimeMachine';
 import TopBar from '@/components/TopBar';
 import { logout, restoreSession, type User } from '@/lib/api';
 import { useLive } from '@/lib/live';
@@ -18,6 +19,7 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [booting, setBooting] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showTM, setShowTM] = useState(false);
   const live = useLive(!!user);
 
   useEffect(() => {
@@ -39,6 +41,7 @@ export default function Home() {
         status={live.status}
         connected={live.connected}
         onChanged={live.refreshStatus}
+        onTimeMachine={() => setShowTM(true)}
         onLogout={() => {
           logout();
           setUser(null);
@@ -58,6 +61,7 @@ export default function Home() {
           <DecisionFeed feed={live.feed} onPick={setSelected} />
         </aside>
       </main>
+      {showTM && <TimeMachine status={live.status} onClose={() => setShowTM(false)} />}
     </div>
   );
 }

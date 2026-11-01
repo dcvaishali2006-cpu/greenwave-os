@@ -114,3 +114,29 @@ Free-flow trip time is 90 s. Priority takes the ambulance to within 2 to 9 s of 
 other traffic waits 4 to 6% longer in most cases and about 16% longer in heavy rain with the adaptive controller, because the
 cross street gives up green time. The one negative figure (incident, fixed plan) is within the noise of the run-to-run variation, not a real gain.
 No parameter was tuned on these seeds: the 20 s lead time and 5 s minimum green were set from the safety reasoning above before the run.
+
+## Time Machine
+
+Rewind to any second of the hour, give the signals to each controller from there, and compare the next stretch on identical traffic.
+
+```ts
+const r = forkRun({ scenario: 'incident', seed: 1, atS: 1200, windowS: 2400, history: 'fixed' });
+r.branches; // one per controller: average wait, queues, stops, throughput, a queue series for the chart, the first decisions with reasons
+forkRobustness({ scenario: 'incident', atS: 1200, windowS: 2400, history: 'fixed' }, [1, 2, 3, 4, 5]); // the same fork over several seeds
+```
+
+Every branch re-runs the hour from the same seed with the same `history` controller up to the fork, so the past is identical (the result reports the vehicles and queue at the fork to prove it) and the same cars enter afterwards. Only the signal decisions after the fork differ.
+
+### What it shows (seeds 1 to 10, `history: 'fixed'`, adaptive against the unchanged fixed plan)
+
+| Fork, window | Mean wait: fixed | adaptive | Change | Adaptive better in |
+|---|---|---|---|---|
+| Incident, 20:00, 15 min (the blockage only) | 77.1 s | 79.0 s | +2% | 3 of 10 |
+| Incident, 20:00, 40 min (blockage and recovery) | 111.9 s | 86.8 s | -22% | 10 of 10 |
+| Incident, 35:00, 25 min (recovery) | 140.3 s | 98.9 s | -30% | 10 of 10 |
+| Incident, from 0:00, 60 min | 85.1 s | 66.4 s | -22% | 10 of 10 |
+| Normal, 15:00, 30 min | 24.8 s | 24.5 s | -1% | 3 of 10 |
+| Rain, 5:00, 30 min | 46.6 s | 49.8 s | +7% | 5 of 10 |
+
+Read it honestly: adaptive control does not help during the first minutes of a blockage (nothing can clear a blocked lane), it pays back while the queue
+clears, and in normal traffic it ties the fixed plan. The Time Machine screen reports the multi-seed result, and says "no clear difference" or "worse" when that is what the data shows.
