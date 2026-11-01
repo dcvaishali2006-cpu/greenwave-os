@@ -1,0 +1,47 @@
+// Type-only imports: nothing from the engine is bundled into the browser.
+import type { LoggedDecision, Metrics, NetworkState } from '@greenwave/engine';
+
+export type { LoggedDecision, Metrics, NetworkState };
+export type { Dir, JunctionState, ApproachView } from '@greenwave/engine';
+
+export type ControllerName = 'adaptive' | 'fixed' | 'fixed-tuned';
+
+export interface LiveStatus {
+  scenario: string;
+  seed: number;
+  controller: ControllerName;
+  time: number;
+  durationS: number;
+  running: boolean;
+  metrics?: Metrics;
+}
+
+export interface CompareRow {
+  label: string;
+  digits: number;
+  fixed: number;
+  tuned: number;
+  adaptive: number;
+  vsFixedPct: number;
+  vsTunedPct: number;
+}
+
+export interface CompareResult {
+  scenario: string;
+  seeds: number[];
+  rows: CompareRow[];
+  winsVsFixed: number;
+  winsVsTuned: number;
+}
+
+export const SCENARIOS = [
+  { id: 'normal', label: 'Normal peak hour' },
+  { id: 'incident', label: 'Blocked lane (incident)' },
+  { id: 'rain', label: 'Heavy rain' },
+] as const;
+
+export const CONTROLLERS: { id: ControllerName; label: string; hint: string }[] = [
+  { id: 'adaptive', label: 'Adaptive', hint: 'Plan follows measured demand' },
+  { id: 'fixed', label: 'Fixed', hint: 'Equal split, 60 s cycle' },
+  { id: 'fixed-tuned', label: 'Fixed (tuned)', hint: 'Webster plan for average demand' },
+];

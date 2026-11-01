@@ -1,0 +1,12 @@
+{
+  "name": "greenwave-os",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "dev:api": "npm run dev -w @greenwave/api"
+  }
+}
