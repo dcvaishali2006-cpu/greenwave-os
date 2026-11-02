@@ -23,8 +23,8 @@ Demo accounts are shown as buttons on the login screen (admin, operator, viewer)
 Tests:
 
 ```bash
-npm test -w @greenwave/engine     # simulator, controllers, emergency corridor (30 tests)
-npm test -w @greenwave/api        # auth, roles, endpoints, emergency (23 tests)
+npm test -w @greenwave/engine     # simulator, controllers, emergency corridor, Time Machine (30 tests)
+npm test -w @greenwave/api        # auth, roles, endpoints, emergency, Time Machine, Copilot (39 tests)
 npm run benchmark -w @greenwave/engine -- --seeds=1..10
 ```
 
@@ -42,13 +42,14 @@ npm run benchmark -w @greenwave/engine -- --seeds=1..10
 - **Fair comparison.** Each seed produces identical entry traffic for every controller, so differences come from the controller alone.
 - **Emergency corridor.** Send an ambulance and the signals ahead of it turn green in time: trip time falls from about 160 s to about 92 s with no stops, and the app shows what that costs everyone else.
 - **Time Machine.** Rewind to any moment, switch the signal controller from there, and compare on identical traffic. It says "no clear difference" when that is the truth.
+- **Traffic Copilot.** Ask in plain words ("Why is J3 backing up?", "What should I do?"). It answers from live data and can only *propose* actions; an operator must approve, and every approval is audited. Works offline with a built-in assistant; set `ANTHROPIC_API_KEY` to let Claude answer instead (falls back to built-in on any failure).
 - **Honest results.** The controller was tuned on seeds 101-110 and is reported on seeds 1-10. See `packages/engine/README.md` for the numbers, including where adaptive only ties the fixed plan.
 
 ## Status and limits
 
 Built and tested: simulator, controllers, API, Control Room (checked in a real browser).
 
-Not built yet: PostgreSQL (users and audit log are in memory and reset on restart), incidents with diversions, Traffic Copilot / MCP, deployment.
+Not built yet: PostgreSQL (users and audit log are in memory and reset on restart), incidents with diversions, MCP server, deployment.
 
 Model limits: two signal phases, no turning movements, no platoon dispersion. Results are from a simulator, not real roads.
 

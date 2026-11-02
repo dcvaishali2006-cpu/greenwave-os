@@ -2,6 +2,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import ComparePanel from '@/components/ComparePanel';
+import CopilotDrawer from '@/components/CopilotDrawer';
 import DecisionFeed from '@/components/DecisionFeed';
 import EmergencyPanel from '@/components/EmergencyPanel';
 import JunctionPanel from '@/components/JunctionPanel';
@@ -11,6 +12,7 @@ import TimeMachine from '@/components/TimeMachine';
 import TopBar from '@/components/TopBar';
 import { logout, restoreSession, type User } from '@/lib/api';
 import { useLive } from '@/lib/live';
+import type { ChatMessage } from '@/lib/types';
 
 // Leaflet touches `window`, so the map is only ever rendered in the browser.
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-panel" /> });
@@ -20,6 +22,8 @@ export default function Home() {
   const [booting, setBooting] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [showTM, setShowTM] = useState(false);
+  const [showCopilot, setShowCopilot] = useState(false);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
   const live = useLive(!!user);
 
   useEffect(() => {
@@ -42,10 +46,13 @@ export default function Home() {
         connected={live.connected}
         onChanged={live.refreshStatus}
         onTimeMachine={() => setShowTM(true)}
+        onCopilot={() => setShowCopilot(true)}
         onLogout={() => {
           logout();
           setUser(null);
           setSelected(null);
+          setChat([]);
+          setShowCopilot(false);
         }}
       />
       <main className="grid min-h-0 flex-1 grid-rows-[minmax(320px,55vh)_1fr] lg:grid-cols-[1fr_390px] lg:grid-rows-1">
@@ -61,6 +68,7 @@ export default function Home() {
           <DecisionFeed feed={live.feed} onPick={setSelected} />
         </aside>
       </main>
+      {showCopilot && <CopilotDrawer user={user} messages={chat} setMessages={setChat} onChanged={live.refreshStatus} onClose={() => setShowCopilot(false)} />}
       {showTM && <TimeMachine status={live.status} onClose={() => setShowTM(false)} />}
     </div>
   );

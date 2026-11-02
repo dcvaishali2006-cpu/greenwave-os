@@ -4,7 +4,7 @@ import { ApiFail, api, type User } from '@/lib/api';
 import { fmtClock } from '@/lib/corridor';
 import { CONTROLLERS, SCENARIOS, type ControllerName, type LiveStatus } from '@/lib/types';
 
-export default function TopBar({ user, status, connected, onChanged, onLogout, onTimeMachine }: { user: User; status: LiveStatus | null; connected: boolean; onChanged: () => void; onLogout: () => void; onTimeMachine: () => void }) {
+export default function TopBar({ user, status, connected, onChanged, onLogout, onTimeMachine, onCopilot }: { user: User; status: LiveStatus | null; connected: boolean; onChanged: () => void; onLogout: () => void; onTimeMachine: () => void; onCopilot: () => void }) {
   const [error, setError] = useState('');
   const canControl = user.role === 'operator' || user.role === 'admin';
 
@@ -91,6 +91,10 @@ export default function TopBar({ user, status, connected, onChanged, onLogout, o
           Priority {(status?.priority ?? true) ? 'on' : 'off'}
         </button>
       </div>
+
+      <button onClick={onCopilot} title="Ask questions in plain words. Actions are only proposed: an operator must approve them" className="rounded-lg border border-go/60 bg-go/10 px-3 py-1.5 text-xs font-semibold text-go transition hover:bg-go/20">
+        Copilot
+      </button>
 
       <button onClick={onTimeMachine} title="Rewind to any moment, switch the signal controller from there, and compare on identical traffic" className="rounded-lg border border-ai/60 bg-ai/15 px-3 py-1.5 text-xs font-semibold text-ai transition hover:bg-ai/25">
         Time Machine

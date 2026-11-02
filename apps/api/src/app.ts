@@ -9,6 +9,8 @@ import { AuditLog } from './audit.js';
 import { ApiError, AuthService, requireAuth, requireRole } from './auth.js';
 import { config } from './config.js';
 import { CONTROLLER_NAMES, LiveSim, type ControllerName } from './liveSim.js';
+import { actionSchema, answerBuiltIn, describeContext, ProposalStore, type CopilotContext, type ProposalAction } from './copilot.js';
+import { askClaude } from './llm.js';
 import { attachWebSocket } from './ws.js';
 
 export interface AppOptions {
@@ -21,6 +23,12 @@ export interface AppOptions {
   scenario?: string;
   seed?: number;
   controller?: ControllerName;
+  /** Claude API key for the Copilot. `null` forces the built-in assistant (tests). Default: ANTHROPIC_API_KEY. */
+  anthropicKey?: string | null;
+  /** Replaces fetch for the Claude call (tests). */
+  copilotFetch?: typeof fetch;
+  /** How long a Copilot proposal stays approvable. */
+  proposalTtlMs?: number;
 }
 
 const scenarioNames = Object.keys(SCENARIOS) as [string, ...string[]];
@@ -43,6 +51,7 @@ const forkQuery = z.object({
   history: z.enum(BRANCH_NAMES as [string, ...string[]]).default('fixed'),
   seeds: z.coerce.number().int().min(1).max(8).default(5),
 });
+const askBody = z.object({ message: z.string().trim().min(1, 'Type a question.').max(500, 'Keep it under 500 characters.') });
 const whyQuery = z.object({ limit: z.coerce.number().int().min(1).max(50).default(5) });
 const compareQuery = z.object({ scenario: z.enum(scenarioNames).default('incident'), seeds: z.coerce.number().int().min(1).max(10).default(5) });
 const auditQuery = z.object({ action: z.string().optional(), email: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) });
@@ -63,6 +72,8 @@ export function createApp(opts: AppOptions = {}) {
   const compareCache = new Map<string, ReturnType<typeof runBenchmark>>();
   const emergencyCache = new Map<string, ReturnType<typeof runEmergencyBenchmark>>();
   const forkCache = new Map<string, unknown>();
+  const proposals = new ProposalStore(opts.proposalTtlMs);
+  const anthropicKey = opts.anthropicKey === undefined ? config.anthropicKey : opts.anthropicKey;
 
   app.disable('x-powered-by');
   app.use(helmet());
@@ -199,6 +210,90 @@ export function createApp(opts: AppOptions = {}) {
       forkCache.set(key, result);
     }
     res.json(result);
+  });
+
+  // ---- Traffic Copilot ----
+  // It answers from the live data and may PROPOSE an action. Only an operator or admin can approve it, and every
+  // approval is audited. A proposal can never run by itself, whether it came from the built-in assistant or from Claude.
+  const getCompare = (scenario: string) => {
+    const key = `${scenario}:5`;
+    let r = compareCache.get(key);
+    if (!r) {
+      r = runBenchmark(scenario, [1, 2, 3, 4, 5]);
+      compareCache.set(key, r);
+    }
+    return r;
+  };
+  const copilotContext = (): CopilotContext => ({
+    state: live.state(),
+    time: live.time,
+    scenario: live.cfg.scenario,
+    controller: live.cfg.controller,
+    priority: live.status().priority,
+    metrics: live.metrics(),
+    decisions: (id, n) => live.decisions(id, n),
+    compare: getCompare,
+  });
+  const askLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many questions. Wait a minute.' } } });
+
+  api.get('/copilot/status', authed, (_req, res) => res.json({ mode: anthropicKey ? 'claude' : 'built-in', model: anthropicKey ? config.copilotModel : null }));
+
+  api.post('/copilot/ask', authed, askLimiter, async (req, res, next) => {
+    try {
+      const { message } = askBody.parse(req.body);
+      const ctx = copilotContext();
+      let mode: 'claude' | 'built-in' = 'built-in';
+      let reply = anthropicKey ? await askClaude(message, describeContext(ctx), { apiKey: anthropicKey, model: config.copilotModel, fetchImpl: opts.copilotFetch }) : null;
+      if (reply) mode = 'claude';
+      else reply = answerBuiltIn(message, ctx);
+      const proposal = reply.proposal ? proposals.create(reply.proposal, req.user!.email) : null;
+      audit.add(req.user!, 'copilot_ask', { message: message.slice(0, 120), mode, proposal: proposal ? { id: proposal.id, action: proposal.action } : null });
+      res.json({ answer: reply.answer, mode, proposal });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /** Run an approved action through the same code the manual buttons use. */
+  const execute = (action: ProposalAction, by: { id: string; email: string }): string => {
+    const act = actionSchema.parse(action);
+    if (act.type === 'set_controller') {
+      const from = live.cfg.controller;
+      if (from === act.controller) throw new ApiError(409, 'NO_CHANGE', `${act.controller} control is already running.`);
+      live.setController(act.controller);
+      audit.add(by, 'switch_controller', { from, to: act.controller, atSecond: live.time, via: 'copilot' });
+      return `Switched from ${from} to ${act.controller} control.`;
+    }
+    if (act.type === 'dispatch_emergency') {
+      const run = live.dispatchEmergency(act.direction);
+      audit.add(by, 'dispatch_emergency', { direction: act.direction, priority: run.priority, atSecond: live.time, via: 'copilot' });
+      return `Ambulance ${run.id} dispatched ${act.direction === 'EB' ? 'J1 to J5' : 'J5 to J1'}${run.priority ? ' with signal priority' : ' without signal priority'}.`;
+    }
+    if (live.status().priority === act.enabled) throw new ApiError(409, 'NO_CHANGE', `Ambulance priority is already ${act.enabled ? 'on' : 'off'}.`);
+    live.setPriority(act.enabled);
+    audit.add(by, 'set_emergency_priority', { enabled: act.enabled, atSecond: live.time, via: 'copilot' });
+    return `Ambulance priority turned ${act.enabled ? 'on' : 'off'}.`;
+  };
+
+  api.post('/copilot/proposals/:id/approve', authed, canControl, (req, res) => {
+    const id = String(req.params.id);
+    const p = proposals.get(id);
+    if (!p) throw new ApiError(404, 'NOT_FOUND', `No proposal ${id}.`);
+    if (p.status === 'pending') {
+      const result = execute(p.action, req.user!);
+      proposals.decide(id, 'approved', req.user!.email, result);
+      audit.add(req.user!, 'copilot_approve', { proposalId: id, action: p.action, result, atSecond: live.time });
+    } else {
+      proposals.decide(id, 'approved', req.user!.email); // throws the right 409 (expired or already decided)
+    }
+    res.json({ proposal: proposals.get(id), status: live.status() });
+  });
+
+  api.post('/copilot/proposals/:id/reject', authed, canControl, (req, res) => {
+    const id = String(req.params.id);
+    const p = proposals.decide(id, 'rejected', req.user!.email);
+    audit.add(req.user!, 'copilot_reject', { proposalId: id, action: p.action, atSecond: live.time });
+    res.json({ proposal: p });
   });
 
   // ---- Admin ----

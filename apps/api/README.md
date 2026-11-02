@@ -5,7 +5,7 @@ Express + WebSocket API around `@greenwave/engine`. A simulation runs continuous
 ```bash
 cp ../../.env.example ../../.env     # optional: defaults work for development
 npm run dev -w @greenwave/api        # from the repo root; API on http://localhost:4000
-npm test -w @greenwave/api           # 14 tests: auth, RBAC, audit, Why?, scenarios, compare, WebSocket
+npm test -w @greenwave/api           # 39 tests: auth, RBAC, audit, Why?, scenarios, compare, WebSocket, emergency, Time Machine, Copilot
 ```
 
 Set `SIM_SPEED=10` to fast-forward the simulation (10 simulated seconds per real second) when demoing.
@@ -32,6 +32,10 @@ Demo accounts (password `demo1234`): `admin@demo.com`, `operator@demo.com`, `vie
 | `POST /live/emergency/priority` | operator, admin | `{enabled: boolean}` signal priority for ambulances. Audited |
 | `GET /analytics/emergency?scenario=&controller=&seeds=` | any | Measured ambulance benefit and cost to other traffic, priority off vs on (cached) |
 | `GET /timemachine/fork?scenario=&seed=&at=&window=&history=&seeds=` | any | Time Machine: fork at second `at`, compare fixed, fixed-tuned and adaptive for `window` seconds on identical traffic, plus the same fork over `seeds` seeds. Read-only (the live run is untouched), cached, 30 per minute |
+| `GET /copilot/status` | any | Which brain answers: `built-in` or `claude` (when `ANTHROPIC_API_KEY` is set) |
+| `POST /copilot/ask` | any | `{message}` (1-500 chars, 30 per minute). Answers from live data. Any action comes back as a **proposal**, never executed |
+| `POST /copilot/proposals/:id/approve` | operator, admin | Runs the proposed action through the same live methods as the buttons. Expires after 10 min; 409 if already decided. Audited as `copilot_approve` |
+| `POST /copilot/proposals/:id/reject` | operator, admin | Rejects a proposal. Audited as `copilot_reject` |
 | `GET /analytics/compare?scenario=&seeds=` | any | Adaptive vs fixed benchmark over 1 to 10 seeds (cached) |
 | `GET /admin/audit?action=&user=&limit=` | admin | Audit log |
 | `GET /admin/users` | admin | Users (no password hashes) |
@@ -55,4 +59,4 @@ Client messages: `{type:'subscribe', junctionIds:['J1','J3']}` limits tick paylo
 
 - **Real:** JWT auth, refresh tokens, role checks in one middleware, audit of logins, denied attempts and control actions, input validation, rate-limited login, security headers.
 - **Stand-in:** users and the audit log live in memory (a restart clears them). Swap `AuthService.users` and `AuditLog` for the `users` and `audit_logs` tables from the build guide when PostgreSQL is wired in.
-- **Not built yet:** incidents and diversions, emergency corridor, copilot and proposals, the agent role, and `POST /runs/:id/fork` (the engine already supports forks via `setController`).
+- **Not built yet:** incidents and diversions, the agent role, and `POST /runs/:id/fork` (the engine already supports forks via `setController`).

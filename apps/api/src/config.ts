@@ -10,6 +10,9 @@ export const config = {
   simSpeed: Number(process.env.SIM_SPEED ?? 1),
   simScenario: process.env.SIM_SCENARIO ?? 'normal',
   simSeed: Number(process.env.SIM_SEED ?? 7),
+  /** Optional. With a key the Copilot asks Claude; without one it uses the built-in assistant. */
+  anthropicKey: process.env.ANTHROPIC_API_KEY || null,
+  copilotModel: process.env.COPILOT_MODEL ?? 'claude-sonnet-5-5',
 };
 
 if (process.env.NODE_ENV === 'production' && config.jwtSecret === DEV_SECRET) {

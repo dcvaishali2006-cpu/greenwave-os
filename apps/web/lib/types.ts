@@ -51,3 +51,29 @@ export const CONTROLLERS: { id: ControllerName; label: string; hint: string }[] 
   { id: 'fixed', label: 'Fixed', hint: 'Equal split, 60 s cycle' },
   { id: 'fixed-tuned', label: 'Fixed (tuned)', hint: 'Webster plan for average demand' },
 ];
+
+/** What the Copilot may propose. Nothing runs until an operator approves it. */
+export type CopilotAction =
+  | { type: 'set_controller'; controller: ControllerName }
+  | { type: 'dispatch_emergency'; direction: 'EB' | 'WB' }
+  | { type: 'set_priority'; enabled: boolean };
+
+export interface CopilotProposal {
+  id: string;
+  action: CopilotAction;
+  title: string;
+  reason: string;
+  evidence?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  expiresAt: number;
+  decidedBy?: string;
+  result?: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  text: string;
+  mode?: 'claude' | 'built-in';
+  proposal?: CopilotProposal | null;
+}
