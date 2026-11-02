@@ -7,14 +7,24 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
 }
 
-/** In-memory audit log. Swap for the audit_logs table when PostgreSQL is wired in. */
+/**
+ * Audit log. Reads come from memory (the last 5000 entries); every new entry is also
+ * handed to `sink`, which writes it to the database, so the log survives restarts.
+ */
 export class AuditLog {
-  private entries: AuditEntry[] = [];
-  private nextId = 1;
+  private entries: AuditEntry[];
+  private nextId: number;
+
+  constructor(initial: AuditEntry[] = [], private sink?: (e: AuditEntry) => void) {
+    this.entries = initial.slice(-5000);
+    this.nextId = initial.reduce((m, e) => Math.max(m, e.id), 0) + 1;
+  }
 
   add(actor: { id: string; email: string } | null, action: string, details?: Record<string, unknown>): void {
-    this.entries.push({ id: this.nextId++, at: new Date().toISOString(), userId: actor?.id ?? null, user: actor?.email ?? null, action, details });
+    const entry: AuditEntry = { id: this.nextId++, at: new Date().toISOString(), userId: actor?.id ?? null, user: actor?.email ?? null, action, details };
+    this.entries.push(entry);
     if (this.entries.length > 5000) this.entries.shift();
+    this.sink?.(entry);
   }
 
   list(filter: { action?: string; user?: string; limit?: number } = {}): AuditEntry[] {

@@ -5,15 +5,22 @@ import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { z, ZodError } from 'zod';
 import { BRANCH_NAMES, ForkError, forkRobustness, forkRun, runBenchmark, runEmergencyBenchmark, SCENARIOS } from '@greenwave/engine';
-import { AuditLog } from './audit.js';
-import { ApiError, AuthService, requireAuth, requireRole } from './auth.js';
+import { AuditLog, type AuditEntry } from './audit.js';
+import bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
+import { ApiError, AuthService, requireAuth, requireRole, seedUsers, type User } from './auth.js';
 import { config } from './config.js';
 import { CONTROLLER_NAMES, LiveSim, type ControllerName } from './liveSim.js';
 import { actionSchema, answerBuiltIn, describeContext, ProposalStore, type CopilotContext, type ProposalAction } from './copilot.js';
 import { askClaude } from './llm.js';
+import { MemoryStorage, type Storage } from './storage.js';
 import { attachWebSocket } from './ws.js';
 
 export interface AppOptions {
+  /** Where users and the audit log are kept. Default: nothing kept (tests). index.ts passes a database. */
+  storage?: Storage;
+  /** Users and audit entries already loaded from `storage`. */
+  loaded?: { users: User[]; audit: AuditEntry[] };
   /** 0 picks a free port (tests). */
   port?: number;
   /** Real milliseconds per simulated second. Default: 1000 / SIM_SPEED. */
@@ -32,6 +39,7 @@ export interface AppOptions {
 }
 
 const scenarioNames = Object.keys(SCENARIOS) as [string, ...string[]];
+const newUserBody = z.object({ email: z.string().email(), name: z.string().min(1).max(80), role: z.enum(['admin', 'operator', 'viewer']), password: z.string().min(8).max(100) });
 const loginBody = z.object({ email: z.string().email(), password: z.string().min(1) });
 const refreshBody = z.object({ refreshToken: z.string().min(10) });
 const controllerBody = z.object({ controller: z.enum(CONTROLLER_NAMES as [string, ...string[]]) });
@@ -64,8 +72,14 @@ export function createApp(opts: AppOptions = {}) {
     speed: config.simSpeed,
     tickMs: opts.tickMs,
   });
-  const auth = new AuthService();
-  const audit = new AuditLog();
+  const storage = opts.storage ?? new MemoryStorage();
+  let users = opts.loaded?.users ?? [];
+  if (users.length === 0) {
+    users = seedUsers();
+    users.forEach((u) => storage.saveUser(u));
+  }
+  const auth = new AuthService(users);
+  const audit = new AuditLog(opts.loaded?.audit ?? [], (e) => storage.appendAudit(e));
   const app = express();
   const api = express.Router();
   const authed = requireAuth(auth);
@@ -80,7 +94,7 @@ export function createApp(opts: AppOptions = {}) {
   app.use(cors({ origin: config.webOrigin }));
   app.use(express.json({ limit: '50kb' }));
 
-  api.get('/health', (_req, res) => res.json({ ok: true, time: live.time }));
+  api.get('/health', (_req, res) => res.json({ ok: true, time: live.time, storage: storage.kind }));
 
   // ---- Authentication ----
   const loginLimiter = rateLimit({ windowMs: 60_000, limit: opts.loginLimitPerMin ?? 10, standardHeaders: true, legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Wait a minute.' } } });
@@ -301,6 +315,16 @@ export function createApp(opts: AppOptions = {}) {
   api.get('/admin/audit', authed, adminOnly, (req, res) => res.json(audit.list(auditQuery.parse(req.query))));
   api.get('/admin/users', authed, adminOnly, (_req, res) => res.json(auth.users.map(({ passwordHash: _h, ...u }) => u)));
 
+  api.post('/admin/users', authed, adminOnly, (req, res) => {
+    const b = newUserBody.parse(req.body);
+    if (auth.users.some((u) => u.email.toLowerCase() === b.email.toLowerCase())) throw new ApiError(409, 'EMAIL_TAKEN', 'A user with this email already exists.');
+    const user: User = { id: randomUUID(), email: b.email, name: b.name, role: b.role, passwordHash: bcrypt.hashSync(b.password, 10) };
+    auth.users.push(user);
+    storage.saveUser(user);
+    audit.add(req.user!, 'create_user', { email: user.email, role: user.role });
+    res.status(201).json({ user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  });
+
   app.use('/api/v1', api);
 
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'No such route.')));
@@ -320,6 +344,7 @@ export function createApp(opts: AppOptions = {}) {
     live,
     auth,
     audit,
+    storage,
     server,
     /** Start listening and start the simulation clock. Resolves with the port. */
     start: () =>
@@ -334,7 +359,7 @@ export function createApp(opts: AppOptions = {}) {
         live.stop();
         for (const c of wss.clients) c.terminate();
         wss.close();
-        server.close(() => resolve());
+        server.close(() => storage.close().then(() => resolve()));
       }),
   };
 }

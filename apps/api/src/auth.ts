@@ -36,7 +36,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Demo accounts for judges. Replace with the users table when PostgreSQL is wired in. */
+/** Demo accounts for judges. Saved to the database the first time the server starts. */
 export function seedUsers(): User[] {
   const hash = bcrypt.hashSync('demo1234', 8);
   return [

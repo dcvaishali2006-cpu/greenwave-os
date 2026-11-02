@@ -5,7 +5,7 @@ Express + WebSocket API around `@greenwave/engine`. A simulation runs continuous
 ```bash
 cp ../../.env.example ../../.env     # optional: defaults work for development
 npm run dev -w @greenwave/api        # from the repo root; API on http://localhost:4000
-npm test -w @greenwave/api           # 39 tests: auth, RBAC, audit, Why?, scenarios, compare, WebSocket, emergency, Time Machine, Copilot
+npm test -w @greenwave/api           # 42 tests (43 with PostgreSQL): auth, RBAC, audit, Why?, scenarios, compare, WebSocket, emergency, Time Machine, Copilot, database
 ```
 
 Set `SIM_SPEED=10` to fast-forward the simulation (10 simulated seconds per real second) when demoing.
@@ -39,6 +39,7 @@ Demo accounts (password `demo1234`): `admin@demo.com`, `operator@demo.com`, `vie
 | `GET /analytics/compare?scenario=&seeds=` | any | Adaptive vs fixed benchmark over 1 to 10 seeds (cached) |
 | `GET /admin/audit?action=&user=&limit=` | admin | Audit log |
 | `GET /admin/users` | admin | Users (no password hashes) |
+| `POST /admin/users` | admin | `{email, name, role, password (8+ chars)}` creates a user. 409 if the email exists. Audited as `create_user` |
 
 Errors always look like `{ "error": { "code": "FORBIDDEN", "message": "..." } }`.
 
@@ -60,3 +61,18 @@ Client messages: `{type:'subscribe', junctionIds:['J1','J3']}` limits tick paylo
 - **Real:** JWT auth, refresh tokens, role checks in one middleware, audit of logins, denied attempts and control actions, input validation, rate-limited login, security headers.
 - **Stand-in:** users and the audit log live in memory (a restart clears them). Swap `AuthService.users` and `AuditLog` for the `users` and `audit_logs` tables from the build guide when PostgreSQL is wired in.
 - **Not built yet:** incidents and diversions, the agent role, and `POST /runs/:id/fork` (the engine already supports forks via `setController`).
+
+## Database
+
+Users and the audit log are saved; everything else is rebuilt from the simulator's seed.
+
+| Setting | Result |
+|---|---|
+| nothing set | SQLite file at `apps/api/data/greenwave.db` (created on first start, ignored by git) |
+| `DB_PATH=...` | SQLite file somewhere else |
+| `DATABASE_URL=postgres://...` | PostgreSQL (hosting). Tables are created on first start. A wrong URL stops the server with an error |
+| `DB=memory` | nothing saved (what the tests use) |
+
+`GET /health` shows which one is active. The first start saves the three demo accounts; after that the saved users are used. Delete the `.db` file to reset. If the SQLite module cannot load, the API warns and runs without saving instead of failing.
+
+PostgreSQL test: `TEST_DATABASE_URL=postgres://user@localhost:5432/emptydb npm test -w @greenwave/api` (skipped when not set).

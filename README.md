@@ -24,7 +24,7 @@ Tests:
 
 ```bash
 npm test -w @greenwave/engine     # simulator, controllers, emergency corridor, Time Machine (30 tests)
-npm test -w @greenwave/api        # auth, roles, endpoints, emergency, Time Machine, Copilot (39 tests)
+npm test -w @greenwave/api        # auth, roles, endpoints, emergency, Time Machine, Copilot (42 tests)
 npm run benchmark -w @greenwave/engine -- --seeds=1..10
 ```
 
@@ -33,7 +33,7 @@ npm run benchmark -w @greenwave/engine -- --seeds=1..10
 | Path | What it is |
 |---|---|
 | `packages/engine` | Seeded simulator, fixed-time and adaptive (Webster-based) controllers, benchmark |
-| `apps/api` | Express + WebSocket API, JWT auth, roles, audit log. See `apps/api/README.md` |
+| `apps/api` | Express + WebSocket API, JWT auth, roles, saved audit log (SQLite or PostgreSQL). See `apps/api/README.md` |
 | `apps/web` | Next.js Control Room: live map, KPIs, decision feed, Why? panel, comparison |
 
 ## What makes it different
@@ -49,7 +49,9 @@ npm run benchmark -w @greenwave/engine -- --seeds=1..10
 
 Built and tested: simulator, controllers, API, Control Room (checked in a real browser).
 
-Not built yet: PostgreSQL (users and audit log are in memory and reset on restart), incidents with diversions, MCP server, deployment.
+Database: users and the audit log are saved (SQLite file on a laptop, PostgreSQL when `DATABASE_URL` is set), so they survive restarts. The live simulation itself is not stored; it restarts from its seed.
+
+Not built yet: incidents with diversions, MCP server, deployment.
 
 Model limits: two signal phases, no turning movements, no platoon dispersion. Results are from a simulator, not real roads.
 
